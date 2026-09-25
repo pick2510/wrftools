@@ -65,19 +65,31 @@ struct EcefPointCloud {
 
 using PixelKdTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, EcefPointCloud>, EcefPointCloud, 3>;
 
-// For every pixel, the indices of its `k` nearest pixels (by great-circle
-// chord distance, ascending - including itself, always first at distance
-// 0), matching using_kdtree's tree.query(..., k=kpoints) exactly.
-std::vector<std::vector<std::uint32_t>> nearestNeighbors(const std::vector<float>& lat, const std::vector<float>& lon, std::size_t k) {
-    EcefPointCloud cloud(lat, lon);
-    PixelKdTree tree(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+// The indices of a pixel's `k` nearest pixels (by great-circle chord
+// distance, ascending - including itself, always first at distance 0),
+// matching using_kdtree's tree.query(..., k=kpoints) exactly. Queried on
+// demand, one pixel at a time, rather than precomputed for the whole grid:
+// only urban pixels are ever looked up, and with the default NPIX_AREA
+// (NPIX_NLC^2 = 2025 neighbors) precomputing every pixel of a 350x350
+// domain meant ~122k k=2025 queries plus ~1 GB of stored results - minutes
+// of apparent hang for what is a handful of actual lookups.
+class NeighborSearcher {
+public:
+    NeighborSearcher(const std::vector<float>& lat, const std::vector<float>& lon, std::size_t k)
+        : cloud_(lat, lon), tree_(3, cloud_, nanoflann::KDTreeSingleIndexAdaptorParams(10)), k_(k), distances_(k) {}
 
-    std::vector<std::vector<std::uint32_t>> result(cloud.points.size(), std::vector<std::uint32_t>(k));
-    std::vector<double> distances(k);
-    for (std::size_t i = 0; i < cloud.points.size(); ++i)
-        tree.knnSearch(cloud.points[i].data(), static_cast<std::uint32_t>(k), result[i].data(), distances.data());
-    return result;
-}
+    [[nodiscard]] std::vector<std::uint32_t> query(std::size_t pixel) {
+        std::vector<std::uint32_t> result(k_);
+        tree_.knnSearch(cloud_.points[pixel].data(), static_cast<std::uint32_t>(k_), result.data(), distances_.data());
+        return result;
+    }
+
+private:
+    EcefPointCloud cloud_;
+    PixelKdTree tree_;
+    std::size_t k_;
+    std::vector<double> distances_;
+};
 
 // pandas Series.mode()[0]'s tie-break: the SMALLEST value among those
 // tied for the highest frequency (mode() itself returns every tied value
@@ -211,7 +223,7 @@ void removeUrban(const std::filesystem::path& srcPath, const std::filesystem::pa
         throw UserError("The area you selected is larger than the domain size: you chose an area of " + std::to_string(effectiveNpixArea) +
                          " pixels and the domain is " + std::to_string(npix) + " pixels. Reduce NPIX_AREA.");
     const std::size_t kpoints = std::min(npix, effectiveNpixArea);
-    const auto neighbors = nearestNeighbors(lat, lon, kpoints);
+    NeighborSearcher searcher(lat, lon, kpoints);
 
     std::vector<bool> luseUrb(npix), luseNatland(npix);
     for (std::size_t p = 0; p < npix; ++p) {
@@ -225,7 +237,7 @@ void removeUrban(const std::filesystem::path& srcPath, const std::filesystem::pa
 
         std::vector<std::uint32_t> auxKd;
         auxKd.reserve(static_cast<std::size_t>(npixNlc));
-        for (std::uint32_t candidate : neighbors[p]) {
+        for (std::uint32_t candidate : searcher.query(p)) {
             if (!luseNatland[candidate]) continue;
             auxKd.push_back(candidate);
             if (auxKd.size() == static_cast<std::size_t>(npixNlc)) break;
