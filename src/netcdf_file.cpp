@@ -81,6 +81,19 @@ std::vector<std::string> attributeNames(int ncid, int varid) {
 // read segfaulted on an empty buffer) - nc_put_vara with an explicit count
 // sidesteps that by not depending on dst's unlimited-dimension state at
 // all.
+// Re-applies the source variable's shuffle/deflate settings to the freshly
+// defined destination variable (netCDF-4 only - classic-format files have
+// no per-variable compression, and nc_inq_var_deflate then reports
+// NC_ENOTNC4). Without this, every variable rebuilt by resizeDimension/
+// rebuildStructure silently came out uncompressed - a 14 MB geo_em file
+// grew to ~150 MB after the LCZ conversion. Must run before nc_enddef.
+// Does nothing for a source variable that wasn't compressed.
+void copyCompression(int srcNcid, int srcVarid, int dstNcid, int dstVarid) {
+    int shuffle = 0, deflate = 0, level = 0;
+    if (nc_inq_var_deflate(srcNcid, srcVarid, &shuffle, &deflate, &level) != NC_NOERR || !deflate) return;
+    checkNc(nc_def_var_deflate(dstNcid, dstVarid, shuffle, deflate, level), "nc_def_var_deflate");
+}
+
 void copyVariableData(int srcNcid, int srcVarid, NetcdfFile::NcType type, const std::vector<std::size_t>& start, const std::vector<std::size_t>& counts,
     int dstNcid, int dstVarid) {
     const std::size_t count = productOf(counts);
@@ -550,6 +563,7 @@ void NetcdfFile::resizeDimension(const std::filesystem::path& path, const std::s
             int newVarId = -1;
             checkNc(nc_def_var(dstNcid, name, type, varNdims, dimids.data(), &newVarId), "nc_def_var " + std::string(name));
             if (newVarId != varid) throw UserError("NetcdfFile::resizeDimension: unexpected variable id mismatch copying " + path.string());
+            copyCompression(srcNcid, varid, dstNcid, newVarId);
 
             for (const auto& attrName : attributeNames(srcNcid, varid)) copyAttribute(srcNcid, varid, attrName, dstNcid, newVarId);
         }
@@ -729,6 +743,7 @@ void NetcdfFile::rebuildStructure(const std::filesystem::path& path, const std::
                 checkNc(nc_def_var(dstNcid, name, override->type, static_cast<int>(newDimids.size()), newDimids.data(), &newVarId),
                     "nc_def_var (override) " + std::string(name));
                 if (newVarId != varid) throw UserError("NetcdfFile::rebuildStructure: unexpected variable id mismatch copying " + path.string());
+                copyCompression(srcNcid, varid, dstNcid, newVarId);  // the overridden variable's own source counterpart (same varid)
                 continue;
             }
 
@@ -737,6 +752,7 @@ void NetcdfFile::rebuildStructure(const std::filesystem::path& path, const std::
             int newVarId = -1;
             checkNc(nc_def_var(dstNcid, name, type, varNdims, dimids.data(), &newVarId), "nc_def_var " + std::string(name));
             if (newVarId != varid) throw UserError("NetcdfFile::rebuildStructure: unexpected variable id mismatch copying " + path.string());
+            copyCompression(srcNcid, varid, dstNcid, newVarId);
             for (const auto& attrName : attributeNames(srcNcid, varid)) copyAttribute(srcNcid, varid, attrName, dstNcid, newVarId);
         }
 
