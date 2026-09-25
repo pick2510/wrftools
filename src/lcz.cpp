@@ -775,6 +775,18 @@ int createLczParamsFile(const LczParamsInputs& inputs, const std::filesystem::pa
         setTextAttr("FRC_URB2D", "stagger", "M");
         setIntAttr("FRC_URB2D", "sr_x", 1);
         setIntAttr("FRC_URB2D", "sr_y", 1);
+        // rebuildStructure defines URB_PARAM from scratch, so it comes out
+        // with no attributes at all - and metgrid.exe needs FieldType/
+        // MemoryOrder/stagger on every geo_em field (without them it aborts
+        // with "In read_next_field(), problems with ext_pkg_get_var_info()").
+        // Values match geogrid.exe's own URB_PARAM output.
+        setIntAttr("URB_PARAM", "FieldType", 104);
+        setTextAttr("URB_PARAM", "MemoryOrder", "XYZ");
+        setTextAttr("URB_PARAM", "units", "dimensionless");
+        setTextAttr("URB_PARAM", "description", "Urban_Parameters");
+        setTextAttr("URB_PARAM", "stagger", "M");
+        setIntAttr("URB_PARAM", "sr_x", 1);
+        setIntAttr("URB_PARAM", "sr_y", 1);
 
         NetcdfFile::Attribute titleAttr;
         if (dst.hasAttribute("", "TITLE")) {

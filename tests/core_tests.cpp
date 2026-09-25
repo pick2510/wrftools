@@ -1773,6 +1773,21 @@ TEST_CASE("Full LCZ pipeline (checkLczIntegrity -> removeUrban -> createLczParam
         CHECK(params.getAttribute("", "FLAG_URB_PARAM").numbers[0] == 1);
         CHECK(params.getAttribute("", "NBUI_MAX").numbers[0] == 5);
 
+        // metgrid.exe reads FieldType/MemoryOrder/stagger off every geo_em
+        // field and aborts if any is missing - both rebuilt variables must
+        // carry them.
+        for (const std::string var : {"FRC_URB2D", "URB_PARAM"}) {
+            INFO(var);
+            REQUIRE(params.hasAttribute(var, "FieldType"));
+            CHECK(params.getAttribute(var, "FieldType").numbers[0] == 104);
+            REQUIRE(params.hasAttribute(var, "MemoryOrder"));
+            CHECK(params.getAttribute(var, "MemoryOrder").text == (var == "URB_PARAM" ? "XYZ" : "XY"));
+            REQUIRE(params.hasAttribute(var, "stagger"));
+            CHECK(params.getAttribute(var, "stagger").text == "M");
+            CHECK(params.hasAttribute(var, "sr_x"));
+            CHECK(params.hasAttribute(var, "sr_y"));
+        }
+
         constexpr std::size_t ny = 102, nx = 162, npix = ny * nx;
         const auto luIndex = params.readFloat("LU_INDEX");
         const auto frcUrb2d = params.readFloat("FRC_URB2D");
